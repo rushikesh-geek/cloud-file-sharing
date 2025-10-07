@@ -1,0 +1,45 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyInsecureConnections",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::rushikesh-file-sharing-876715058144",
+        "arn:aws:s3:::rushikesh-file-sharing-876715058144/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    },
+    {
+      "Sid": "AllowLambdaAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::876715058144:role/lambda-execution-role"
+      },
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::rushikesh-file-sharing-876715058144/*"
+    },
+    {
+      "Sid": "DenyDirectPublicAccess",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::rushikesh-file-sharing-876715058144/*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:SourceAccount": "876715058144"
+        }
+      }
+    }
+  ]
+}

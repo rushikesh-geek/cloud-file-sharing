@@ -1,0 +1,347 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "CloudFormation template for Cloud File Sharing System",
+    "Parameters": {
+        "BucketName": {
+            "Type": "String",
+            "Default": "rushikesh-file-sharing-876715058144",
+            "Description": "Name of the S3 bucket for file storage"
+        },
+        "TableName": {
+            "Type": "String",
+            "Default": "file-sharing-codes-rushikesh",
+            "Description": "Name of the DynamoDB table for code storage"
+        },
+        "CodeExpiryHours": {
+            "Type": "Number",
+            "Default": 24,
+            "Description": "Number of hours before codes expire"
+        },
+        "MaxFileSize": {
+            "Type": "Number",
+            "Default": 52428800,
+            "Description": "Maximum file size in bytes (default: 50MB)"
+        }
+    },
+    "Resources": {
+        "FileShareBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Ref": "BucketName"
+                },
+                "CorsConfiguration": {
+                    "CorsRules": [
+                        {
+                            "AllowedHeaders": ["*"],
+                            "AllowedMethods": ["GET", "POST", "PUT", "DELETE", "HEAD"],
+                            "AllowedOrigins": ["*"],
+                            "ExposedHeaders": ["ETag"],
+                            "MaxAge": 3000
+                        }
+                    ]
+                },
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": true,
+                    "BlockPublicPolicy": true,
+                    "IgnorePublicAcls": true,
+                    "RestrictPublicBuckets": true
+                },
+                "LifecycleConfiguration": {
+                    "Rules": [
+                        {
+                            "Id": "DeleteOldFiles",
+                            "Status": "Enabled",
+                            "ExpirationInDays": 7,
+                            "AbortIncompleteMultipartUpload": {
+                                "DaysAfterInitiation": 1
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "FileShareTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "TableName": {
+                    "Ref": "TableName"
+                },
+                "BillingMode": "PAY_PER_REQUEST",
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "code",
+                        "AttributeType": "S"
+                    }
+                ],
+                "KeySchema": [
+                    {
+                        "AttributeName": "code",
+                        "KeyType": "HASH"
+                    }
+                ],
+                "TimeToLiveSpecification": {
+                    "AttributeName": "expiry_time",
+                    "Enabled": true
+                },
+                "StreamSpecification": {
+                    "StreamViewType": "NEW_AND_OLD_IMAGES"
+                }
+            }
+        },
+        "LambdaExecutionRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "lambda.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "FileSharePermissions",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:GetObject",
+                                        "s3:PutObject",
+                                        "s3:DeleteObject",
+                                        "s3:GetObjectVersion"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Sub": "${FileShareBucket}/*"
+                                    }
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "dynamodb:GetItem",
+                                        "dynamodb:PutItem",
+                                        "dynamodb:UpdateItem",
+                                        "dynamodb:DeleteItem",
+                                        "dynamodb:Query",
+                                        "dynamodb:Scan"
+                                    ],
+                                    "Resource": {
+                                        "Fn::GetAtt": ["FileShareTable", "Arn"]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "UploadFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "FunctionName": "rushikesh-file-upload",
+                "Runtime": "python3.9",
+                "Handler": "lambda_function.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": ["LambdaExecutionRole", "Arn"]
+                },
+                "Timeout": 300,
+                "MemorySize": 512,
+                "Environment": {
+                    "Variables": {
+                        "BUCKET_NAME": {
+                            "Ref": "FileShareBucket"
+                        },
+                        "TABLE_NAME": {
+                            "Ref": "FileShareTable"
+                        },
+                        "CODE_EXPIRY_HOURS": {
+                            "Ref": "CodeExpiryHours"
+                        },
+                        "MAX_FILE_SIZE": {
+                            "Ref": "MaxFileSize"
+                        }
+                    }
+                },
+                "Code": {
+                    "ZipFile": "import json\ndef lambda_handler(event, context):\n    return {'statusCode': 200, 'body': json.dumps('Please upload the actual function code')}"
+                }
+            }
+        },
+        "DownloadFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "FunctionName": "rushikesh-file-download",
+                "Runtime": "python3.9",
+                "Handler": "lambda_function.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": ["LambdaExecutionRole", "Arn"]
+                },
+                "Timeout": 300,
+                "MemorySize": 256,
+                "Environment": {
+                    "Variables": {
+                        "BUCKET_NAME": {
+                            "Ref": "FileShareBucket"
+                        },
+                        "TABLE_NAME": {
+                            "Ref": "FileShareTable"
+                        },
+                        "PRESIGNED_URL_EXPIRY": "300"
+                    }
+                },
+                "Code": {
+                    "ZipFile": "import json\ndef lambda_handler(event, context):\n    return {'statusCode': 200, 'body': json.dumps('Please upload the actual function code')}"
+                }
+            }
+        },
+        "ApiGateway": {
+            "Type": "AWS::ApiGateway::RestApi",
+            "Properties": {
+                "Name": "rushikesh-file-sharing-api",
+                "Description": "API Gateway for Cloud File Sharing System",
+                "EndpointConfiguration": {
+                    "Types": ["REGIONAL"]
+                }
+            }
+        },
+        "ApiGatewayResource": {
+            "Type": "AWS::ApiGateway::Resource",
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "ApiGateway"
+                },
+                "ParentId": {
+                    "Fn::GetAtt": ["ApiGateway", "RootResourceId"]
+                },
+                "PathPart": "{proxy+}"
+            }
+        },
+        "UploadMethod": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "ApiGateway"
+                },
+                "ResourceId": {
+                    "Ref": "ApiGatewayResource"
+                },
+                "HttpMethod": "POST",
+                "AuthorizationType": "NONE",
+                "Integration": {
+                    "Type": "AWS_PROXY",
+                    "IntegrationHttpMethod": "POST",
+                    "Uri": {
+                        "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UploadFunction.Arn}/invocations"
+                    }
+                }
+            }
+        },
+        "DownloadMethod": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "ApiGateway"
+                },
+                "ResourceId": {
+                    "Ref": "ApiGatewayResource"
+                },
+                "HttpMethod": "GET",
+                "AuthorizationType": "NONE",
+                "Integration": {
+                    "Type": "AWS_PROXY",
+                    "IntegrationHttpMethod": "POST",
+                    "Uri": {
+                        "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DownloadFunction.Arn}/invocations"
+                    }
+                }
+            }
+        },
+        "ApiGatewayDeployment": {
+            "Type": "AWS::ApiGateway::Deployment",
+            "DependsOn": ["UploadMethod", "DownloadMethod"],
+            "Properties": {
+                "RestApiId": {
+                    "Ref": "ApiGateway"
+                },
+                "StageName": "prod"
+            }
+        },
+        "LambdaApiGatewayPermissionUpload": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "FunctionName": {
+                    "Ref": "UploadFunction"
+                },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "apigateway.amazonaws.com",
+                "SourceArn": {
+                    "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
+                }
+            }
+        },
+        "LambdaApiGatewayPermissionDownload": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "FunctionName": {
+                    "Ref": "DownloadFunction"
+                },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "apigateway.amazonaws.com",
+                "SourceArn": {
+                    "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "ApiGatewayUrl": {
+            "Description": "URL of the API Gateway",
+            "Value": {
+                "Fn::Sub": "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
+            },
+            "Export": {
+                "Name": "FileShareApiUrl"
+            }
+        },
+        "S3BucketName": {
+            "Description": "Name of the S3 bucket",
+            "Value": {
+                "Ref": "FileShareBucket"
+            },
+            "Export": {
+                "Name": "FileShareBucketName"
+            }
+        },
+        "DynamoDBTableName": {
+            "Description": "Name of the DynamoDB table",
+            "Value": {
+                "Ref": "FileShareTable"
+            },
+            "Export": {
+                "Name": "FileShareTableName"
+            }
+        },
+        "UploadFunctionArn": {
+            "Description": "ARN of the upload Lambda function",
+            "Value": {
+                "Fn::GetAtt": ["UploadFunction", "Arn"]
+            }
+        },
+        "DownloadFunctionArn": {
+            "Description": "ARN of the download Lambda function",
+            "Value": {
+                "Fn::GetAtt": ["DownloadFunction", "Arn"]
+            }
+        }
+    }
+}
